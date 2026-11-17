@@ -1,0 +1,10 @@
+checkpoints/
+data/
+outputs/
+__pycache__/
+*.py[cod]
+*.pt
+*.pth
+*.ckpt
+.ipynb_checkpoints/
+wandb/
