@@ -99,6 +99,9 @@ def main():
     parser.add_argument("--max_eval_sents", type=int, default=300, help="Số câu tối đa để tính BLEU mỗi epoch")
     parser.add_argument("--save_dir", type=str, default="checkpoints")
     parser.add_argument("--dummy", action="store_true", help="Dùng dữ liệu giả lập nhỏ để test nhanh pipeline")
+    parser.add_argument("--wandb", action="store_true", help="Ghi log huấn luyện lên Weights & Biases")
+    parser.add_argument("--wandb_project", type=str, default="btl-dl-nmt-envi")
+    parser.add_argument("--wandb_name", type=str, default=None)
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -115,6 +118,22 @@ def main():
     model = build_model(args.model, len(src_vocab), len(tgt_vocab), device)
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Số tham số huấn luyện: {num_params:,}")
+
+    wb = None
+    if args.wandb:
+        import wandb
+        wb = wandb
+        run_name = args.wandb_name or f"{args.model}_n{args.max_train_samples or 'all'}_ep{args.epochs}"
+        wb.init(
+            project=args.wandb_project,
+            name=run_name,
+            config={
+                **vars(args),
+                "num_params": num_params,
+                "src_vocab_size": len(src_vocab),
+                "tgt_vocab_size": len(tgt_vocab),
+            },
+        )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
@@ -134,6 +153,17 @@ def main():
             f"Epoch {epoch:02d}/{args.epochs:02d} ({dt:.1f}s) | "
             f"Train Loss: {tr_loss:.4f} | Val Loss: {va_loss:.4f} | Val BLEU: {va_bleu:.2f}"
         )
+
+        if wb is not None:
+            wb.log(
+                {
+                    "epoch": epoch,
+                    "train_loss": tr_loss,
+                    "val_loss": va_loss,
+                    "val_bleu": va_bleu,
+                    "epoch_time_s": dt,
+                }
+            )
 
         if va_bleu >= best_bleu:
             best_bleu = va_bleu
@@ -173,6 +203,16 @@ def main():
     attn_path = os.path.join(args.save_dir, f"{args.model}_attention.png")
     plot_attention(src_tokens, pred_tokens, attn_mat, attn_path, title=f"{args.model.upper()} Attention")
     print(f">>> Đã lưu Attention Map tại: {attn_path}")
+
+    if wb is not None:
+        wb.summary["test_bleu"] = test_bleu
+        wb.summary["best_val_bleu"] = best_bleu
+        wb.summary["sample_src"] = " ".join(src_tokens)
+        wb.summary["sample_ref"] = " ".join(ref_tokens)
+        wb.summary["sample_pred"] = " ".join(pred_tokens)
+        if os.path.exists(attn_path):
+            wb.log({"attention_map": wb.Image(attn_path)})
+        wb.finish()
 
 
 if __name__ == "__main__":
