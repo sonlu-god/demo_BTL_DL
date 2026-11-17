@@ -81,9 +81,52 @@ class Vocab:
         return len(self.itos)
 
 
+def _write_hf_split(split_data, src_path: str, tgt_path: str) -> None:
+    with open(src_path, "w", encoding="utf-8") as f_src, \
+         open(tgt_path, "w", encoding="utf-8") as f_tgt:
+        for item in split_data:
+            if "translation" in item:
+                en_text = item["translation"]["en"]
+                vi_text = item["translation"]["vi"]
+            else:
+                en_text = item["en"]
+                vi_text = item["vi"]
+            f_src.write(en_text.replace("\n", " ").strip() + "\n")
+            f_tgt.write(vi_text.replace("\n", " ").strip() + "\n")
+
+
 def download_iwslt15(data_dir: str = "data/iwslt15") -> str:
-    """Tải bộ dữ liệu IWSLT'15 En-Vi từ Stanford NMT nếu chưa có."""
+    """Tải bộ dữ liệu IWSLT'15 En-Vi (ưu tiên Hugging Face, fallback Stanford NMT)."""
     os.makedirs(data_dir, exist_ok=True)
+    if all(os.path.exists(os.path.join(data_dir, f)) for f in IWSLT_FILES):
+        return data_dir
+
+    # 1. Thử tải từ Hugging Face datasets (nhanh và ổn định trên Colab)
+    try:
+        from datasets import load_dataset
+        print("Đang tải IWSLT'15 En-Vi từ Hugging Face (thainq107/iwslt2015-en-vi) ...")
+        try:
+            ds = load_dataset("thainq107/iwslt2015-en-vi")
+        except Exception:
+            print("Thử nguồn dự phòng IWSLT/mt_eng_vietnamese ...")
+            ds = load_dataset("IWSLT/mt_eng_vietnamese", "iwslt2015-en-vi")
+
+        split_map = {
+            "train": ("train.en", "train.vi"),
+            "validation": ("tst2012.en", "tst2012.vi"),
+            "test": ("tst2013.en", "tst2013.vi"),
+        }
+        for split_name, (en_file, vi_file) in split_map.items():
+            _write_hf_split(
+                ds[split_name],
+                os.path.join(data_dir, en_file),
+                os.path.join(data_dir, vi_file),
+            )
+        return data_dir
+    except Exception as e:
+        print(f"Không tải được qua Hugging Face ({e}), chuyển sang Stanford NMT ...")
+
+    # 2. Fallback: tải trực tiếp từ Stanford NMT
     for fname in IWSLT_FILES:
         fpath = os.path.join(data_dir, fname)
         if not os.path.exists(fpath):
